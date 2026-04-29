@@ -1,0 +1,93 @@
+From 91a48f1cb323caaabffae8ca4ac26c68a169bd33 Mon Sep 17 00:00:00 2001
+From: ROCKNIX <rocknix@rocknix.org>
+Date: Wed, 29 Apr 2026 15:21:42 -0700
+Subject: [PATCH] power: supply: qcom_battmgr: sync status when service starts
+
+When the device boots with a USB-C cable already attached, the battery
+manager service can come up after firmware has already processed the attach
+state. Linux enables qcom_battmgr notifications only after that service-up
+event, so there may be no later attach edge to refresh the battery/USB
+power-supply state. Userspace then sees a non-charging state until the cable
+is physically replugged.
+
+The driver already documents that concurrent firmware requests make the
+battery manager stop responding, and normal property reads/writes are
+serialized with battmgr->lock. Use the same lock for the notification-enable
+request, then explicitly read the current battery and input states and emit
+power_supply_changed() events. This primes the cable-present-at-boot state
+without waiting for a disconnect/reconnect notification.
+
+Signed-off-by: ROCKNIX <rocknix@rocknix.org>
+---
+ drivers/power/supply/qcom_battmgr.c | 44 ++++++++++++++++++++++++++++-
+ 1 file changed, 43 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index 4ecff5a..6f07411 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -1583,6 +1583,28 @@ static void qcom_battmgr_callback(const void *data, size_t len, void *priv)
+ 		qcom_battmgr_sm8350_callback(battmgr, data, len);
+ }
+ 
++static int qcom_battmgr_sync_power_supplies(struct qcom_battmgr *battmgr)
++{
++	int ret;
++
++	if (battmgr->variant == QCOM_BATTMGR_SC8280XP ||
++	    battmgr->variant == QCOM_BATTMGR_X1E80100)
++		return qcom_battmgr_update_status(battmgr);
++
++	ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET,
++					   BATT_STATUS, 0);
++	if (ret)
++		return ret;
++
++	ret = qcom_battmgr_request_property(battmgr, BATTMGR_USB_PROPERTY_GET,
++					   USB_ONLINE, 0);
++	if (ret)
++		return ret;
++
++	return qcom_battmgr_request_property(battmgr, BATTMGR_WLS_PROPERTY_GET,
++					   WLS_ONLINE, 0);
++}
++
+ static void qcom_battmgr_enable_worker(struct work_struct *work)
+ {
+ 	struct qcom_battmgr *battmgr = container_of(work, struct qcom_battmgr, enable_work);
+@@ -1591,11 +1613,31 @@ static void qcom_battmgr_enable_worker(struct work_struct *work)
+ 		.hdr.type = cpu_to_le32(PMIC_GLINK_NOTIFY),
+ 		.hdr.opcode = cpu_to_le32(BATTMGR_REQUEST_NOTIFICATION),
+ 	};
++	int sync_ret = 0;
+ 	int ret;
+ 
++	mutex_lock(&battmgr->lock);
+ 	ret = qcom_battmgr_request(battmgr, &req, sizeof(req));
+-	if (ret)
++	if (!ret)
++		sync_ret = qcom_battmgr_sync_power_supplies(battmgr);
++	mutex_unlock(&battmgr->lock);
++
++	if (ret) {
+ 		dev_err(battmgr->dev, "failed to request power notifications\n");
++		return;
++	}
++
++	if (sync_ret)
++		dev_warn(battmgr->dev, "failed to sync power-supply status: %d\n", sync_ret);
++
++	if (battmgr->bat_psy)
++		power_supply_changed(battmgr->bat_psy);
++	if (battmgr->ac_psy)
++		power_supply_changed(battmgr->ac_psy);
++	if (battmgr->usb_psy)
++		power_supply_changed(battmgr->usb_psy);
++	if (battmgr->wls_psy)
++		power_supply_changed(battmgr->wls_psy);
+ }
+ 
+ static void qcom_battmgr_pdr_notify(void *priv, int state)
+-- 
+2.54.0
+
