@@ -2,9 +2,15 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2023 JELOS (https://github.com/JustEnoughLinuxOS)
 
+. /etc/profile.d/001-functions
+
 ### Sleep is currently broken, so we'll disable it.
 
 /usr/bin/suspendmode off
+
+# DPMS output power-cycling leaves SM8550 DSI panels black after
+# fake-suspend resume. Use the backlight-only fake-suspend path.
+set_setting system.suspend.dpms 0
 
 ### Ignore power button presses for now, until we can finish up fixing sleep.
 cat <<EOF >~/.config/logind.conf.d/login.conf
