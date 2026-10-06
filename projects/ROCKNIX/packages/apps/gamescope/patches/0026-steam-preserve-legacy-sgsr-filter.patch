@@ -1,0 +1,20 @@
+From: kapdon <94782486+kapdon@users.noreply.github.com>
+Date: Tue, 06 Oct 2026 14:36:37 -0700
+Subject: [PATCH] steamcompmgr: preserve legacy Steam filter 5 as SGSR
+
+Map the legacy ROCKNIX Steam filter value to upstream SGSR, as the newer
+scaling-filter property already does. No command-line alias is added.
+
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -7255,6 +7255,10 @@
+ 		case 4:
+ 			g_wantedUpscaleScaler = GamescopeUpscaleScaler::AUTO;
+ 			g_wantedUpscaleFilter = GamescopeUpscaleFilter::NIS;
++			break;
++		case 5:
++			g_wantedUpscaleScaler = GamescopeUpscaleScaler::AUTO;
++			g_wantedUpscaleFilter = GamescopeUpscaleFilter::SGSR;
+ 			break;
+ 		}
+ 		hasRepaint = true;
